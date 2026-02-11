@@ -26,7 +26,6 @@ const organizerProfileSchema = new mongoose.Schema(
     contactEmail: String,
     contactNumber: String,
     discordWebhook: String,
-    approved: {type: Boolean, default: false},
   },
   { _id: false }
 );

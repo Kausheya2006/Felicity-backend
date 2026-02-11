@@ -7,6 +7,9 @@ exports.createOrganizer = async (req, res) => {
     try {
         const { email, password, name, category, description, contactEmail, contactNumber} = req.body;
 
+        console.log('=== createOrganizer called ===');
+        console.log('Request body:', { email, name, category, contactEmail });
+
         if (!email || !password || !name || !contactEmail || !category)
             return res.status(400).json({ message: 'Email, Password, Name, Category and Contact Email are required' });
 
@@ -27,12 +30,19 @@ exports.createOrganizer = async (req, res) => {
                 description: description || '',
                 contactEmail,
                 contactNumber: contactNumber || '',
-                approved: true,
             }
         });
 
+        console.log('Organizer created successfully:', {
+            id: organizer._id,
+            email: organizer.email,
+            role: organizer.role,
+            name: organizer.organizerProfile?.name
+        });
+
         res.status(201).json({ message: 'Organizer account created successfully', organizer });
-} catch (error) {
+    } catch (error) {
+        console.error('Error in createOrganizer:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
@@ -62,11 +72,35 @@ exports.removeOrganizer = async (req, res) => {
 
 exports.getAllOrganizers = async (req, res) => {
     try {
+        console.log('=== getAllOrganizers called ===');
+        console.log('Request user:', req.user);
+        
+        // Check total users in DB
+        const totalUsers = await User.countDocuments();
+        console.log('Total users in DB:', totalUsers);
+        
+        // Check users by role
+        const roleCount = await User.aggregate([
+            { $group: { _id: '$role', count: { $sum: 1 } } }
+        ]);
+        console.log('Users by role:', roleCount);
+        
         const organizers = await User.find({ role: 'organizer' })
                                 .select('-password')
-                                .sort({createdAt : -1}) // Most recent first
+                                .sort({createdAt : -1}); // Most recent first
+        
+        console.log('Found organizers:', organizers.length);
+        if (organizers.length > 0) {
+            console.log('First organizer:', {
+                email: organizers[0].email,
+                role: organizers[0].role,
+                name: organizers[0].organizerProfile?.name
+            });
+        }
+        
         res.status(200).json({ count: organizers.length, organizers });
     } catch (error) {
+        console.error('Error in getAllOrganizers:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
@@ -115,8 +149,7 @@ exports.approveOrganizer = async (req, res) => {
         const organizer = await User.findByIdAndUpdate(
             id, 
             { 
-                isVerified: true,
-                'organizerProfile.approved': true 
+                isVerified: true
             }, 
             { new: true }
         ); // new : return updated doc

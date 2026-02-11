@@ -145,10 +145,6 @@ exports.getAllOrganizers = async (req, res) => {
         const organizers = await User.find({ 
             role: 'organizer',
             isVerified: true,
-            $or: [
-                { 'organizerProfile.approved': true },
-                { 'organizerProfile.approved': { $exists: false } }
-            ]
         }).select('email organizerProfile');
 
         res.status(200).json({ organizers });
@@ -165,10 +161,6 @@ exports.getOrganizerById = async (req, res) => {
             _id: id,
             role: 'organizer',
             isVerified: true,
-            $or: [
-                { 'organizerProfile.approved': true },
-                { 'organizerProfile.approved': { $exists: false } }
-            ]
         }).select('email organizerProfile');
 
         if (!organizer)
@@ -225,10 +217,6 @@ exports.followOrganizer = async (req, res) => {
             _id: id,
             role: 'organizer',
             isVerified: true,
-            $or: [
-                { 'organizerProfile.approved': true },
-                { 'organizerProfile.approved': { $exists: false } }
-            ]
         });
         if (!organizer)
             return res.status(404).json({ message: 'Organizer not found' });

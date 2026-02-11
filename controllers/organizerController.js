@@ -165,7 +165,7 @@ exports.publishEvent = async (req, res) => {
                                 inline: true
                             },
                             {
-                                name: '👥 Max Participants',
+                                name: 'Max Participants',
                                 value: event.maxParticipants ? event.maxParticipants.toString() : 'Unlimited',
                                 inline: true
                             },
