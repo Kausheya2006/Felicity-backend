@@ -1,0 +1,8 @@
+node_modules/
+.env
+uploads/payments/*
+uploads/qr/*
+!uploads/payments/.gitkeep
+!uploads/qr/.gitkeep
+*.log
+.DS_Store
