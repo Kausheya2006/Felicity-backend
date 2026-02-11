@@ -18,5 +18,6 @@ router.post('/organizers/:id/reset-password', adminController.resetOrganizerPass
 router.get('/pending-organizers', adminController.getPendingOrganizers);
 router.put('/approve-organizer/:id', adminController.approveOrganizer);
 router.delete('/reject-organizer/:id', adminController.rejectOrganizer);
+router.get('/statistics', adminController.getStatistics);
 
 module.exports = router;

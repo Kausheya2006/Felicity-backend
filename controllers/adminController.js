@@ -1,4 +1,6 @@
 const User = require('../models/User');
+const Event = require('../models/Event');
+const Registration = require('../models/Registration');
 const bcrypt = require('bcryptjs');
 
 exports.createOrganizer = async (req, res) => {
@@ -139,6 +141,28 @@ exports.rejectOrganizer = async (req, res) => {
 
         res.status(200).json({ message: 'Organizer rejected and deleted successfully' });
      } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};
+
+exports.getStatistics = async (req, res) => {
+    try {
+        const totalOrganizers = await User.countDocuments({ role: 'organizer' });
+        const verifiedOrganizers = await User.countDocuments({ role: 'organizer', isVerified: true });
+        const pendingOrganizers = await User.countDocuments({ role: 'organizer', isVerified: false });
+        const totalEvents = await Event.countDocuments();
+        const totalParticipants = await User.countDocuments({ role: 'participant' });
+        const totalRegistrations = await Registration.countDocuments();
+
+        res.status(200).json({
+            totalOrganizers,
+            verifiedOrganizers,
+            pendingOrganizers,
+            totalEvents,
+            totalParticipants,
+            totalRegistrations
+        });
+    } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
