@@ -125,13 +125,14 @@ exports.changePassword = async (req, res) => {
         if (!user)
             return res.status(404).json({ message: 'User not found' });
 
-        // Verify current password
-        const isMatch = await user.comparePassword(currentPassword);
+        // Verify current password using bcrypt
+        const bcrypt = require('bcryptjs');
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
         if (!isMatch)
             return res.status(400).json({ message: 'Current password is incorrect' });
 
-        // Set new password (will be hashed by pre-save hook)
-        user.password = newPassword;
+        // Hash and set new password
+        user.password = await bcrypt.hash(newPassword, 10);
         await user.save();
 
         res.status(200).json({ message: 'Password changed successfully' });
