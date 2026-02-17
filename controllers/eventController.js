@@ -1,7 +1,9 @@
 const Event = require('../models/Event');
 const Registration = require('../models/Registration');
+const User = require('../models/User');
 const crypto = require('crypto');
 const { createNotification } = require('./notificationController');
+const { sendTicketEmail } = require('../config/mailer');
 
 exports.getAllEvents = async (req, res) => {
     try {
@@ -112,10 +114,9 @@ exports.registerForEvent = async (req, res) => {
             return res.status(400).json({ message: 'Event has reached maximum participant limit' });
 
         if (event.eligibility && event.eligibility.length > 0) { 
-            const User = require('../models/User');
-            const user = await User.findById(userId);
+            const participant = await User.findById(userId);
 
-            if (!event.eligibility.includes(user.participantProfile.participantType)) 
+            if (!event.eligibility.includes(participant.participantProfile.participantType)) 
                 return res.status(403).json({ message: 'You do not meet the eligibility criteria for this event' });
         }
 
@@ -169,6 +170,23 @@ exports.registerForEvent = async (req, res) => {
             null,
             `/organizer/events/${id}`
         );
+
+        // Send ticket email to participant (non-blocking)
+        const participant = await User.findById(userId);
+        if (participant) {
+            const participantName = participant.participantProfile
+                ? `${participant.participantProfile.firstname || ''} ${participant.participantProfile.lastname || ''}`.trim()
+                : '';
+            sendTicketEmail({
+                to: participant.email,
+                participantName,
+                eventTitle: event.title,
+                eventDate: event.eventStartDate,
+                venue: event.venue,
+                ticketId,
+                qrPayload,
+            });
+        }
 
         res.status(201).json({ message: 'Registered successfully', registration });
 
