@@ -1,6 +1,8 @@
 const Event = require('../models/Event');
 const Registration = require('../models/Registration');
 const User = require('../models/User');
+const { createNotification } = require('./notificationController');
+const { sendTicketEmail } = require('../config/mailer');
 
 exports.createEvent = async (req, res) => {
     try {
@@ -15,6 +17,7 @@ exports.createEvent = async (req, res) => {
             registrationDeadline, 
             eligibility, 
             fee,
+            merchandiseFee,
             tags,
             formSchema,
             items,
@@ -29,6 +32,9 @@ exports.createEvent = async (req, res) => {
         if (eventEndDate && new Date(eventEndDate) < new Date(eventStartDate))
             return res.status(400).json({ message: 'Event End Date must be after Event Start Date' });
 
+        if (registrationDeadline && eventEndDate && new Date(registrationDeadline) > new Date(eventEndDate))
+            return res.status(400).json({ message: 'Registration Deadline must be before or on the Event End Date' });
+
         const eventData = {
             title,
             description,
@@ -39,6 +45,7 @@ exports.createEvent = async (req, res) => {
             maxParticipants,
             eligibility: eligibility || [],
             fee: fee || 0,
+            merchandiseFee: merchandiseFee || 0,
             tags: tags || [],
             organizerId: req.user.id,   
             status: 'DRAFT',
@@ -84,16 +91,46 @@ exports.editEvent = async (req, res) => {
         if (event.organizerId.toString() !== req.user.id)
             return res.status(403).json({ message: 'Forbidden: You are not the organizer of this event' });
 
-        if (event.status !== 'DRAFT')
-            return res.status(400).json({ message: 'Only DRAFT events can be edited' });
+        // Define allowed fields based on event status
+        let allowedFields = [];
+        
+        if (event.status === 'DRAFT') {
+            // Draft events: full edit access (except status and organizer)
+            allowedFields = ['title', 'description', 'type', 'eventStartDate', 'eventEndDate', 
+                           'venue', 'maxParticipants', 'registrationDeadline', 'eligibility', 
+                           'fee', 'merchandiseFee', 'tags', 'formSchema', 'items', 'allowTeams', 'minTeamSize', 'maxTeamSize'];
+        } else if (event.status === 'PUBLISHED') {
+            // Published events: limited edit (description, extend deadline, increase limit)
+            allowedFields = ['description', 'registrationDeadline', 'maxParticipants'];
+            
+            // Validate maxParticipants can only increase
+            if (updates.maxParticipants && event.maxParticipants && 
+                parseInt(updates.maxParticipants) < event.maxParticipants) {
+                return res.status(400).json({ message: 'Cannot decrease participant limit for published events' });
+            }
+        }
+
+        // Validate registrationDeadline against event end date (applies to all statuses)
+        if (updates.registrationDeadline) {
+            const deadlineDate = new Date(updates.registrationDeadline);
+            const endDate = updates.eventEndDate ? new Date(updates.eventEndDate) : event.eventEndDate;
+            if (endDate && deadlineDate > endDate) {
+                return res.status(400).json({ message: 'Registration Deadline must be before or on the Event End Date' });
+            }
+        } else if (['ONGOING', 'COMPLETED', 'CLOSED'].includes(event.status)) {
+            // Ongoing/Completed/Closed: no edits allowed
+            return res.status(400).json({ message: `Cannot edit ${event.status.toLowerCase()} events` });
+        } else if (event.status === 'CANCELLED') {
+            return res.status(400).json({ message: 'Cannot edit cancelled events' });
+        }
 
         if (event.formLocked && updates.formSchema)
             return res.status(400).json({ message: 'Form schema is locked and cannot be edited' });
         
-        // Clean up empty strings and undefined values from updates
+        // Clean up empty strings and undefined values from updates, filter by allowed fields
         const cleanedUpdates = {};
         Object.keys(updates).forEach(key => {
-            if (key !== 'status' && key !== 'organizer' && updates[key] !== '' && updates[key] !== undefined) {
+            if (allowedFields.includes(key) && updates[key] !== '' && updates[key] !== undefined) {
                 cleanedUpdates[key] = updates[key];
             }
         });
@@ -171,7 +208,7 @@ exports.publishEvent = async (req, res) => {
                             },
                             {
                                 name: '💰 Fee',
-                                value: event.fee ? `$${event.fee}` : 'Free',
+                                value: event.fee ? `₹${event.fee}` : 'Free',
                                 inline: true
                             },
                             {
@@ -241,7 +278,7 @@ exports.getEventRegistrations = async (req, res) => {
                                     .populate('participantId', 'email participantProfile')
                                     .sort({ createdAt : -1 }); // Most recent first
 
-        res.status(200).json(registrations);
+        res.status(200).json({ registrations, event });
         
     } catch (error) {     
         res.status(500).json({ message: 'Server error', error: error.message });
@@ -376,15 +413,30 @@ exports.getEventAnalytics = async (req, res) => {
 
         const registrations = await Registration.find({ eventId: id });
 
+        // Calculate total revenue from all registration types
+        // Include: NORMAL events (event.fee), MERCH with merch (reg fee + merch fee), MERCH without merch (reg fee only)
+        const totalRevenue = registrations
+            .filter(r => r.status !== 'CANCELLED' && r.status !== 'REJECTED')
+            .reduce((sum, r) => {
+                if (r.order?.amountPaid && r.order?.paymentStatus === 'APPROVED') {
+                    // MERCH type registrations with payment orders (includes both merch and registration-only)
+                    return sum + r.order.amountPaid;
+                } else if (r.type === 'NORMAL' && r.status === 'CONFIRMED') {
+                    // NORMAL type confirmed registrations (event.fee)
+                    return sum + (event.fee || 0);
+                }
+                return sum;
+            }, 0);
+
         const analytics = {
             totalRegistrations: registrations.length,
             confirmedRegistrations: registrations.filter(r => r.status === 'CONFIRMED').length,
             cancelledRegistrations: registrations.filter(r => r.status === 'CANCELLED').length,
+            pendingPayments: registrations.filter(r => r.status === 'PENDING').length,
             attended : registrations.filter(r => r.attended === true).length,
             attendanceRate : registrations.length > 0 ?
                 ((registrations.filter(r => r.attended === true).length / registrations.length) * 100).toFixed(2) + '%' : '0%', // in percentage
-            revenue : registrations.filter(r => r.type === 'MERCH' && r.status !== 'CANCELLED')
-                        .reduce((sum, r) => sum + (r.order?.amountPaid || 0), 0),
+            revenue : totalRevenue,
         };
 
         res.status(200).json({ eventId: id, analytics });
@@ -405,8 +457,18 @@ exports.exportRegistrations = async (req, res) => {
         const registrations = await Registration.find({ eventId: id })
                                     .populate('participantId', 'email participantProfile')
 
-        // Prepare CSV data
-        let csv = 'Name,Email,Registration Date,Status,Type,Attended,Attended At\n';
+        // Get custom form fields from event
+        const customFields = event.formSchema || [];
+        const customFieldIds = customFields.map(f => f.fieldId);
+        const customFieldLabels = customFields.map(f => f.label);
+
+        // Prepare CSV data with custom fields
+        let csvHeaders = ['Name', 'Email', 'Registration Date', 'Status', 'Type', 'Attended', 'Attended At'];
+        if (customFieldLabels.length > 0) {
+            csvHeaders = csvHeaders.concat(customFieldLabels);
+        }
+        let csv = csvHeaders.map(h => `"${h}"`).join(',') + '\n';
+        
         registrations.forEach(reg => {
             const name = `${reg.participantId.participantProfile.firstname} ${reg.participantId.participantProfile.lastname}`;
             const email = reg.participantId.email;
@@ -415,7 +477,21 @@ exports.exportRegistrations = async (req, res) => {
             const type = reg.type;
             const attended = reg.attended ? 'Yes' : 'No';
             const attendedAt = reg.attendedAt ? reg.attendedAt.toISOString() : 'N/A';
-            csv += `"${name}","${email}","${date}","${status}","${type}","${attended}","${attendedAt}"\n`;
+            
+            let row = [name, email, date, status, type, attended, attendedAt];
+            
+            // Add custom field values
+            if (customFieldIds.length > 0 && reg.formResponse) {
+                customFieldIds.forEach(fieldId => {
+                    const value = reg.formResponse[fieldId];
+                    row.push(value !== undefined && value !== null ? String(value) : 'N/A');
+                });
+            } else if (customFieldIds.length > 0) {
+                // Add N/A for each custom field if no formResponse
+                customFieldIds.forEach(() => row.push('N/A'));
+            }
+            
+            csv += row.map(r => `"${r}"`).join(',') + '\n';
         });
 
         res.setHeader('Content-Type', 'text/csv');
@@ -459,10 +535,8 @@ exports.getPaymentApprovals = async (req, res) => {
         if (event.organizerId.toString() !== req.user.id)
             return res.status(403).json({ message: 'Forbidden: You are not the organizer of this event' });
 
-        if (event.type !== 'MERCH')
-            return res.status(400).json({ message: 'Payment approvals are only for merchandise events' });
-
-        const filter = { eventId: id, type: 'MERCH' };
+        // Show payment approvals for any registration that has an order (both merch and registration-fee)
+        const filter = { eventId: id, 'order': { $exists: true, $ne: null } };
         if (status) {
             filter['order.paymentStatus'] = status;
         }
@@ -493,8 +567,8 @@ exports.approvePayment = async (req, res) => {
         if (event.organizerId.toString() !== req.user.id)
             return res.status(403).json({ message: 'Forbidden: You are not the organizer of this event' });
 
-        if (registration.type !== 'MERCH')
-            return res.status(400).json({ message: 'Only merchandise orders require payment approval' });
+        if (!registration.order)
+            return res.status(400).json({ message: 'This registration does not have a payment order' });
 
         if (registration.order.paymentStatus === 'APPROVED')
             return res.status(400).json({ message: 'Payment has already been approved' });
@@ -502,24 +576,26 @@ exports.approvePayment = async (req, res) => {
         if (!registration.order.paymentProof)
             return res.status(400).json({ message: 'No payment proof has been uploaded yet' });
 
-        // Find the item and variant to decrement stock
-        const item = event.items.find(i => i.sku === registration.order.sku);
-        if (!item)
-            return res.status(404).json({ message: 'Item not found in event' });
+        // Only decrement stock for actual merchandise orders (not registration-fee-only orders)
+        const isRegistrationFeeOnly = registration.order.sku === 'REGISTRATION_FEE';
+        if (!isRegistrationFeeOnly) {
+            const item = event.items.find(i => i.sku === registration.order.sku);
+            if (!item)
+                return res.status(404).json({ message: 'Item not found in event' });
 
-        const variant = item.variants.find(v =>
-            v.size === registration.order.variant.size &&
-            v.color === registration.order.variant.color
-        );
-        if (!variant)
-            return res.status(404).json({ message: 'Variant not found' });
+            const variant = item.variants.find(v =>
+                v.size === registration.order.variant.size &&
+                v.color === registration.order.variant.color
+            );
+            if (!variant)
+                return res.status(404).json({ message: 'Variant not found' });
 
-        if (variant.stock < registration.order.quantity)
-            return res.status(400).json({ message: 'Insufficient stock available' });
+            if (variant.stock < registration.order.quantity)
+                return res.status(400).json({ message: 'Insufficient stock available' });
 
-        // Decrement stock
-        variant.stock -= registration.order.quantity;
-        await event.save();
+            variant.stock -= registration.order.quantity;
+            await event.save();
+        }
 
         // Generate QR code payload
         const qrPayload = JSON.stringify({
@@ -535,11 +611,36 @@ exports.approvePayment = async (req, res) => {
         registration.qrPayload = qrPayload;
         await registration.save();
 
-        // TODO: Send confirmation email here
-        // await sendConfirmationEmail(registration);
+        // Send notification and ticket email to participant
+        await createNotification(
+            registration.participantId,
+            'REGISTRATION',
+            'Payment Approved – Ticket Ready',
+            `Your payment for ${event.title} has been approved. Your ticket is ready!`,
+            event._id,
+            null,
+            null,
+            `/events/${event._id}`
+        );
+
+        const participant = await User.findById(registration.participantId);
+        if (participant) {
+            const participantName = participant.participantProfile
+                ? `${participant.participantProfile.firstname || ''} ${participant.participantProfile.lastname || ''}`.trim()
+                : '';
+            sendTicketEmail({
+                to: participant.email,
+                participantName,
+                eventTitle: event.title,
+                eventDate: event.eventStartDate,
+                venue: event.venue,
+                ticketId: registration.ticketId,
+                qrPayload,
+            });
+        }
 
         res.status(200).json({
-            message: 'Payment approved successfully. Stock decremented and ticket generated.',
+            message: 'Payment approved. Ticket generated and emailed to participant.',
             registration
         });
     } catch (error) {
@@ -564,8 +665,8 @@ exports.rejectPayment = async (req, res) => {
         if (event.organizerId.toString() !== req.user.id)
             return res.status(403).json({ message: 'Forbidden: You are not the organizer of this event' });
 
-        if (registration.type !== 'MERCH')
-            return res.status(400).json({ message: 'Only merchandise orders require payment approval' });
+        if (!registration.order)
+            return res.status(400).json({ message: 'This registration does not have a payment order' });
 
         if (registration.order.paymentStatus === 'APPROVED')
             return res.status(400).json({ message: 'Cannot reject an approved payment' });
@@ -576,11 +677,20 @@ exports.rejectPayment = async (req, res) => {
         registration.status = 'REJECTED';
         await registration.save();
 
-        // TODO: Send rejection email here
-        // await sendRejectionEmail(registration, reason);
+        // Notify participant of rejection
+        await createNotification(
+            registration.participantId,
+            'REGISTRATION',
+            'Payment Rejected',
+            `Your payment for ${event.title} was rejected. Reason: ${reason || 'Please re-upload a valid payment proof'}. Re-upload from your dashboard.`,
+            event._id,
+            null,
+            null,
+            `/dashboard`
+        );
 
         res.status(200).json({
-            message: 'Payment rejected successfully.',
+            message: 'Payment rejected. Participant notified.',
             registration
         });
     } catch (error) {

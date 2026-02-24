@@ -199,3 +199,25 @@ exports.getStatistics = async (req, res) => {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
+
+exports.reactivateOrganizer = async (req, res) => {
+    try {
+        const { organizerId } = req.params;
+
+        const organizer = await User.findById(organizerId);
+        if (!organizer || organizer.role !== 'organizer') {
+            return res.status(404).json({ message: 'Organizer not found' });
+        }
+
+        if (organizer.isActive) {
+            return res.status(400).json({ message: 'Organizer is already active' });
+        }
+
+        organizer.isActive = true;
+        await organizer.save();
+
+        res.status(200).json({ message: 'Organizer reactivated successfully' });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+};

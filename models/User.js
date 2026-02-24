@@ -46,6 +46,8 @@ const userSchema = new mongoose.Schema(
 
     isVerified: {type: Boolean, default: false,},
 
+    isActive: {type: Boolean, default: true,},
+
     participantProfile: participantProfileSchema,
 
     organizerProfile: organizerProfileSchema,

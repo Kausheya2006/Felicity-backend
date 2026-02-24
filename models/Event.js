@@ -77,6 +77,10 @@ const eventSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    merchandiseFee: {
+      type: Number,
+      default: 0
+    },
 
     tags: [String],
 

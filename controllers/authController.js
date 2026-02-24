@@ -51,6 +51,9 @@ exports.login = async (req, res) => {
         if (user.role === 'organizer' && !user.isVerified)
             return res.status(403).json({ message: "Account not verified. Please verify your email." });
 
+        if (user.role === 'organizer' && !user.isActive)
+            return res.status(403).json({ message: "Account has been deactivated. Please contact admin." });
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) 
             return res.status(400).json({ message: "Invalid credentials" });

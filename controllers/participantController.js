@@ -325,8 +325,8 @@ exports.uploadPaymentProof = async (req, res) => {
             return res.status(403).json({ message: 'Forbidden: You can only upload payment proof for your own orders' });
         }
 
-        if (registration.type !== 'MERCH') {
-            return res.status(400).json({ message: 'Payment proof is only required for merchandise orders' });
+        if (!registration.order) {
+            return res.status(400).json({ message: 'This registration does not require payment proof' });
         }
 
         if (registration.order.paymentStatus === 'APPROVED') {

@@ -11,6 +11,7 @@ router.post('/create-organizer', adminController.createOrganizer);
 
 router.get('/organizers', adminController.getAllOrganizers);
 router.delete('/organizers/:id', adminController.removeOrganizer);
+router.put('/organizers/:organizerId/reactivate', adminController.reactivateOrganizer);
 
 router.post('/organizers/:id/reset-password', adminController.resetOrganizerPassword);
 
